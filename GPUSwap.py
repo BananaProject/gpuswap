@@ -1,4 +1,6 @@
-import re
+# -*- coding: utf-8 -*-
+
+import re, warnings
 
 
 # https://www.sharcnet.ca/help/index.php/Porting_CUDA_to_OpenCL
@@ -41,10 +43,68 @@ class gpuswap():
     ]
 
     """
+        Indexing references
+    """
+
+    indexing_dims = [
+        "x",
+        "y",
+        "z"
+    ]
+    cuda_indexing = [
+        "gridDim.$dims$",
+        "blockDim.$dims$",
+        "blockIdx.$dims$",
+        "threadIdx.$dims$"
+    ]
+
+    opencl_indexing = [
+        "get_num_groups($dims_num$)",
+        "get_local_size($dims_num$)",
+        "get_group_id($dims_num$)",
+        "get_local_id($dims_num$)"
+    ]
+    """
+        Full patch
+    """
+    def cuda2opencl_full(self, src):
+        src = """
+/*
+ d888b  d8888b. db    db .d8888. db   d8b   db  .d8b.  d8888b.
+88' Y8b 88  `8D 88    88 88'  YP 88   I8I   88 d8' `8b 88  `8D
+88      88oodD' 88    88 `8bo.   88   I8I   88 88ooo88 88oodD'
+88  ooo 88~~~   88    88   `Y8b. Y8   I8I   88 88~~~88 88~~~
+88. ~8~ 88      88b  d88 db   8D `8b d8'8b d8' 88   88 88
+ Y888P  88      ~Y8888P' `8888Y'  `8b8' `8d8'  YP   YP 88
+
+                            --- by github.com/bananaproject ---
+*/\n""" + src
+
+        src = self.cuda2opencl_kernel(src)
+        src = self.cuda2opencl_qualifiers(src)
+        src = self.cuda2opencl_syncitems(src)
+        src = self.cuda2opencl_indexing(src)
+
+        return src
+
+    """
+        Patch indexing
+    """
+
+    def cuda2opencl_indexing(self, src):
+        for i in range(0, len(self.cuda_indexing)):
+            for j in range(0, len(self.indexing_dims)):
+                cuda_item = self.cuda_indexing[i].replace("$dims$", self.indexing_dims[j])
+                opencl_item = self.opencl_indexing[i].replace("$dims_num$", str(j))
+
+                src = src.replace(cuda_item, opencl_item)
+        return src
+    """
         Patch kernels
     """
 
-    def cuda2opencl_kernel(self, src):
+    @staticmethod
+    def cuda2opencl_kernel(src):
         cuda_kernel_regex_vs = r"[a-zA-Z0-9_.+-]+ << <[a-zA-Z0-9\d ,.\(\)]*>> >\([a-zA-Z0-9\d ,.\(\)]*\)"
         comp0 = re.compile(cuda_kernel_regex_vs)
         for element in comp0.findall(src):
@@ -53,18 +113,15 @@ class gpuswap():
             args_aux_pos = args_aux_0.rfind(")")
             args = args_aux_0[0:args_aux_pos].split(", ")
 
-            inject_point = src.find(element + ";")
-
-            src = src.replace(element + ";", "")
-
+            inject = ""
             for arg in args:
-                inject = 'clSetKernelArg(' + function_name + ', ' + arg + ');\n'
-                if src[inject_point - 1] != '\t':
-                    inject = '\t' + inject
-                src = src[:inject_point] + inject + src[inject_point:]
-                inject_point += len(inject)
+                if inject != "":
+                    inject += "\t"
+                inject += 'clSetKernelArg(' + function_name + ', ' + arg + ');\n'
 
-            src = src[:inject_point] + "\tclEnqueueNDRangeKernel(" + function_name + ");\n" + src[inject_point:]
+            inject += "\tclEnqueueNDRangeKernel(" + function_name + ");\n"
+
+            src = src.replace(element + ";", inject)
         return src
 
     """
@@ -73,7 +130,10 @@ class gpuswap():
 
     def cuda2opencl_syncitems(self, src):
         for i in range(0, len(self.cuda_syncs)):
-            src = src.replace(self.cuda_syncs[i], self.opencl_qualifiers[i])
+            if self.opencl_syncs[i] is not None:
+                src = src.replace(self.cuda_syncs[i], self.opencl_syncs[i])
+
+        return src
 
     """
         Patch qualifiers
@@ -81,8 +141,6 @@ class gpuswap():
 
     def cuda2opencl_qualifiers(self, src):
         for i in range(0, len(self.cuda_qualifiers)):
-
-            # Invalid group in regex Mmm
             comp0 = re.compile("__device__ \w* [a-zA-Z0-9_.+-]+\([a-zA-Z0-9\d ,.\(\)]*\)")
 
             for match in comp0.findall(src):
@@ -92,8 +150,6 @@ class gpuswap():
 
             for match in comp1.findall(src):
                 src = src.replace(match, match.replace("__device__ ", ""))
-
-            # Simply replace
             for i in range(0, len(self.cuda_qualifiers)):
                 src = src.replace(self.cuda_qualifiers[i], self.opencl_qualifiers[i])
         return src
