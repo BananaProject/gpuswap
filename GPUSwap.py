@@ -1,6 +1,7 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import re, warnings
+import re, warnings, sys
 
 
 # https://www.sharcnet.ca/help/index.php/Porting_CUDA_to_OpenCL
@@ -105,7 +106,7 @@ class gpuswap():
 
     @staticmethod
     def cuda2opencl_kernel(src):
-        cuda_kernel_regex_vs = r"[a-zA-Z0-9_.+-]+ << <[a-zA-Z0-9\d ,.\(\)]*>> >\([a-zA-Z0-9\d ,.\(\)]*\)"
+        cuda_kernel_regex_vs = r"[a-zA-Z0-9_.+-]+ << <[a-zA-Z0-9\d ,.\(\)]*>> >\([a-zA-Z0-9\d ,._\(\)]*\)"
         comp0 = re.compile(cuda_kernel_regex_vs)
         for element in comp0.findall(src):
             function_name = element.split("<")[0]
@@ -122,6 +123,7 @@ class gpuswap():
             inject += "\tclEnqueueNDRangeKernel(" + function_name + ");\n"
 
             src = src.replace(element + ";", inject)
+            
         return src
 
     """
@@ -153,3 +155,24 @@ class gpuswap():
             for i in range(0, len(self.cuda_qualifiers)):
                 src = src.replace(self.cuda_qualifiers[i], self.opencl_qualifiers[i])
         return src
+
+if len(sys.argv) != 4:
+    print "Invalid syntax! gpuswap.py -type -src -output (Where -type can be -f (file) or -d (directory), -src is the file that will be converted, and -otuput the output path.)"
+    exit(-1)
+
+type = sys.argv[1]
+src = sys.argv[2]
+output = sys.argv[3]
+
+gps = gpuswap()
+
+if type == "-f":
+    src_file = open(src, "r")
+    out_file = open(output, "w")
+
+    final = gps.cuda2opencl_full(src_file.read())
+
+    out_file.write(final)
+
+    src_file.close()
+    out_file.close()
